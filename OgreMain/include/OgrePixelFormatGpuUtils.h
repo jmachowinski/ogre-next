@@ -221,6 +221,29 @@ namespace Ogre {
                                          TextureBox &dst, PixelFormatGpu dstFormat,
                                          bool verticalFlip = false );
 
+        // Internal helper templates for bulk pixel conversion
+        template<typename ConversionFunc, typename TransformFunc, typename PackingFunc>
+        static void bulkPixelConversionLoop( uint8 *srcData, uint8 *dstData,
+                                             const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                             const size_t width, const size_t height, const size_t depthOrSlices,
+                                             const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                             ConversionFunc convFunc, TransformFunc transformFunc, PackingFunc packFunc );
+
+        template<typename ConversionFunc, typename TransformFunc>
+        static void bulkPixelConversionWithDstFormat( uint8 *srcData, uint8 *dstData,
+                                                      const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                                      const size_t width, const size_t height, const size_t depthOrSlices,
+                                                      const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                                      PixelFormatGpu dstFormat, ConversionFunc convFunc, TransformFunc transformFunc );
+
+        template<typename TransformFunc>
+        static void bulkPixelConversionOptimized( uint8 *srcData, PixelFormatGpu srcFormat,
+                                                  uint8 *dstData, PixelFormatGpu dstFormat,
+                                                  const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                                  const size_t width, const size_t height, const size_t depthOrSlices,
+                                                  const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                                  TransformFunc transformFunc );
+
         /// See PixelFormatFlags
         static uint32 getFlags( PixelFormatGpu format );
         static bool isFloat( PixelFormatGpu format );

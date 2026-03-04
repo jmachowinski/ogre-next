@@ -1513,245 +1513,242 @@ namespace Ogre
         // clang-format on
     }  // namespace
     //-----------------------------------------------------------------------------------
-    namespace
+    // Helper template that handles z, y, and x loop nesting with conversion, transform, and packing
+    template<typename ConversionFunc, typename TransformFunc, typename PackingFunc>
+    void PixelFormatGpuUtils::bulkPixelConversionLoop( uint8 *srcData, uint8 *dstData,
+                                        const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                        const size_t width, const size_t height, const size_t depthOrSlices,
+                                        const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                        ConversionFunc convFunc, TransformFunc transformFunc, PackingFunc packFunc )
     {
-        // Helper template that handles z, y, and x loop nesting with conversion, transform, and packing
-        template<typename ConversionFunc, typename TransformFunc, typename PackingFunc>
-        void bulkPixelConversionLoop( uint8 *srcData, uint8 *dstData,
-                                    const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
-                                    const size_t width, const size_t height, const size_t depthOrSlices,
-                                    const TextureBox &src, const TextureBox &dst, bool verticalFlip,
-                                    ConversionFunc convFunc, TransformFunc transformFunc, PackingFunc packFunc )
+        float rgba[4];
+        for( size_t z=0; z<depthOrSlices; ++z )
         {
-            float rgba[4];
-            for( size_t z=0; z<depthOrSlices; ++z )
+            for( size_t y=0; y<height; ++y )
             {
-                for( size_t y=0; y<height; ++y )
+                size_t dest_y = verticalFlip ? height - 1 - y : y;
+                uint8 *srcPtr = srcData + src.bytesPerImage * z + src.bytesPerRow * y;
+                uint8 *dstPtr = dstData + dst.bytesPerImage * z + dst.bytesPerRow * dest_y;
+                
+                for( size_t x=0; x<width; ++x )
                 {
-                    size_t dest_y = verticalFlip ? height - 1 - y : y;
-                    uint8 *srcPtr = srcData + src.bytesPerImage * z + src.bytesPerRow * y;
-                    uint8 *dstPtr = dstData + dst.bytesPerImage * z + dst.bytesPerRow * dest_y;
-                    
-                    for( size_t x=0; x<width; ++x )
-                    {
-                        convFunc( srcPtr, rgba );
-                        transformFunc( rgba );
-                        packFunc( rgba, dstPtr );
-                        srcPtr += srcBytesPerPixel;
-                        dstPtr += dstBytesPerPixel;
-                    }
+                    convFunc( srcPtr, rgba );
+                    transformFunc( rgba );
+                    packFunc( rgba, dstPtr );
+                    srcPtr += srcBytesPerPixel;
+                    dstPtr += dstBytesPerPixel;
                 }
             }
         }
+    }
 
-        // Template wrapper that dispatches on dstFormat and provides packing functor
-        template<typename ConversionFunc, typename TransformFunc>
-        void bulkPixelConversionWithDstFormat( uint8 *srcData, uint8 *dstData,
+    // Template wrapper that dispatches on dstFormat and provides packing functor
+    template<typename ConversionFunc, typename TransformFunc>
+    void PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( uint8 *srcData, uint8 *dstData,
+                                                      const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                                      const size_t width, const size_t height, const size_t depthOrSlices,
+                                                      const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                                      PixelFormatGpu dstFormat, ConversionFunc convFunc, TransformFunc transformFunc )
+    {
+        const uint32 dstFlags = PixelFormatGpuUtils::getFlags( dstFormat );
+        
+        switch( dstFormat )
+        {
+        case PFG_RGBA8_UNORM: case PFG_RGBA8_UNORM_SRGB: case PFG_RGBA8_UINT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<uint8, 4>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<int8, 4>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<uint16, 2>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_RG16_SNORM: case PFG_RG16_SINT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<int16, 2>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_R32_FLOAT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<float, 1>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_R32_UINT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<uint32, 1>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        case PFG_R32_SINT:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFlags]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::convertFromFloat<int32, 1>( rgba, dstPtr, dstFlags );
+                                    } );
+            break;
+        default:
+            PixelFormatGpuUtils::bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                    width, height, depthOrSlices, src, dst, verticalFlip,
+                                    convFunc, transformFunc,
+                                    [dstFormat]( float *rgba, uint8 *dstPtr )
+                                    {
+                                        PixelFormatGpuUtils::packColour( rgba, dstFormat, dstPtr );
+                                    } );
+            break;
+        }
+    }
+
+    // Unified optimized pixel conversion with pluggable transformation
+    template<typename TransformFunc>
+    void PixelFormatGpuUtils::bulkPixelConversionOptimized( uint8 *srcData, PixelFormatGpu srcFormat,
+                                              uint8 *dstData, PixelFormatGpu dstFormat,
                                               const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
                                               const size_t width, const size_t height, const size_t depthOrSlices,
                                               const TextureBox &src, const TextureBox &dst, bool verticalFlip,
-                                              PixelFormatGpu dstFormat, ConversionFunc convFunc, TransformFunc transformFunc )
+                                              TransformFunc transformFunc )
+    {
+        const uint32 srcFlags = PixelFormatGpuUtils::getFlags( srcFormat );
+        
+        // Dispatch on source format
+        switch( srcFormat )
         {
-            const uint32 dstFlags = PixelFormatGpuUtils::getFlags( dstFormat );
-            
-            switch( dstFormat )
-            {
-            case PFG_RGBA8_UNORM: case PFG_RGBA8_UNORM_SRGB: case PFG_RGBA8_UINT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<uint8, 4>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<int8, 4>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<uint16, 2>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_RG16_SNORM: case PFG_RG16_SINT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<int16, 2>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_R32_FLOAT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<float, 1>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_R32_UINT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<uint32, 1>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            case PFG_R32_SINT:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFlags]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::convertFromFloat<int32, 1>( rgba, dstPtr, dstFlags );
-                                        } );
-                break;
-            default:
-                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                        width, height, depthOrSlices, src, dst, verticalFlip,
-                                        convFunc, transformFunc,
-                                        [dstFormat]( float *rgba, uint8 *dstPtr )
-                                        {
-                                            PixelFormatGpuUtils::packColour( rgba, dstFormat, dstPtr );
-                                        } );
-                break;
-            }
+        case PFG_RGBA8_UNORM: case PFG_RGBA8_UNORM_SRGB: case PFG_RGBA8_UINT: 
+        case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
+        {
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::convertToFloat<uint8, 4>( rgba, srcPtr, srcFlags );
+                                                      },
+                                                      transformFunc );
+            break;
         }
-
-        // Unified optimized pixel conversion with pluggable transformation
-        template<typename TransformFunc>
-        void bulkPixelConversionOptimized( uint8 *srcData, PixelFormatGpu srcFormat,
-                                          uint8 *dstData, PixelFormatGpu dstFormat,
-                                          const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
-                                          const size_t width, const size_t height, const size_t depthOrSlices,
-                                          const TextureBox &src, const TextureBox &dst, bool verticalFlip,
-                                          TransformFunc transformFunc )
+        case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
+        case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
         {
-            const uint32 srcFlags = PixelFormatGpuUtils::getFlags( srcFormat );
-            
-            // Dispatch on source format
-            switch( srcFormat )
-            {
-            case PFG_RGBA8_UNORM: case PFG_RGBA8_UNORM_SRGB: case PFG_RGBA8_UINT: 
-            case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
-            {
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::convertToFloat<uint8, 4>( rgba, srcPtr, srcFlags );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
-            case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
-            case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
-            {
-                const bool isBGR = (srcFormat == PFG_BGR8_UNORM || srcFormat == PFG_BGR8_UNORM_SRGB);
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFlags, isBGR]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::convertToFloat<uint8, 3>( rgba, srcPtr, srcFlags );
-                                                      if( isBGR )
-                                                          std::swap( rgba[0], rgba[2] );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
-            case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
-            case PFG_RG16_SNORM: case PFG_RG16_SINT:
-            {
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::convertToFloat<uint16, 2>( rgba, srcPtr, srcFlags );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
-            case PFG_R32_FLOAT:
-            {
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::convertToFloat<float, 1>( rgba, srcPtr, srcFlags );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
-            case PFG_R32_UINT:
-            {
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::convertToFloat<uint32, 1>( rgba, srcPtr, srcFlags );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
-            case PFG_R32_SINT:
-            {
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::convertToFloat<int32, 1>( rgba, srcPtr, srcFlags );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
-            default:
-                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
-                                                  width, height, depthOrSlices, src, dst, verticalFlip,
-                                                  dstFormat,
-                                                  [srcFormat]( uint8 *srcPtr, float *rgba )
-                                                  {
-                                                      PixelFormatGpuUtils::unpackColour( rgba, srcFormat, srcPtr );
-                                                  },
-                                                  transformFunc );
-                break;
-            }
+            const bool isBGR = (srcFormat == PFG_BGR8_UNORM || srcFormat == PFG_BGR8_UNORM_SRGB);
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFlags, isBGR]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::convertToFloat<uint8, 3>( rgba, srcPtr, srcFlags );
+                                                          if( isBGR )
+                                                              std::swap( rgba[0], rgba[2] );
+                                                      },
+                                                      transformFunc );
+            break;
+        }
+        case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
+        case PFG_RG16_SNORM: case PFG_RG16_SINT:
+        {
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::convertToFloat<uint16, 2>( rgba, srcPtr, srcFlags );
+                                                      },
+                                                      transformFunc );
+            break;
+        }
+        case PFG_R32_FLOAT:
+        {
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::convertToFloat<float, 1>( rgba, srcPtr, srcFlags );
+                                                      },
+                                                      transformFunc );
+            break;
+        }
+        case PFG_R32_UINT:
+        {
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::convertToFloat<uint32, 1>( rgba, srcPtr, srcFlags );
+                                                      },
+                                                      transformFunc );
+            break;
+        }
+        case PFG_R32_SINT:
+        {
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::convertToFloat<int32, 1>( rgba, srcPtr, srcFlags );
+                                                      },
+                                                      transformFunc );
+            break;
+        }
+        default:
+            PixelFormatGpuUtils::bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                      width, height, depthOrSlices, src, dst, verticalFlip,
+                                                      dstFormat,
+                                                      [srcFormat]( uint8 *srcPtr, float *rgba )
+                                                      {
+                                                          PixelFormatGpuUtils::unpackColour( rgba, srcFormat, srcPtr );
+                                                      },
+                                                      transformFunc );
+            break;
         }
     }
     //-----------------------------------------------------------------------------------
@@ -1943,7 +1940,7 @@ namespace Ogre
         if( rangeM == 1.0f && rangeA == 0.0f )
         {
             // No range transformation needed
-            bulkPixelConversionOptimized( srcData, srcFormat, dstData, dstFormat,
+            PixelFormatGpuUtils::bulkPixelConversionOptimized( srcData, srcFormat, dstData, dstFormat,
                                           srcBytesPerPixel, dstBytesPerPixel,
                                           width, height, depthOrSlices,
                                           src, dst, verticalFlip,
@@ -1952,7 +1949,7 @@ namespace Ogre
         else
         {
             // Range transformation needed
-            bulkPixelConversionOptimized( srcData, srcFormat, dstData, dstFormat,
+            PixelFormatGpuUtils::bulkPixelConversionOptimized( srcData, srcFormat, dstData, dstFormat,
                                           srcBytesPerPixel, dstBytesPerPixel,
                                           width, height, depthOrSlices,
                                           src, dst, verticalFlip,
