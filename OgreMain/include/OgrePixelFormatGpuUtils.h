@@ -122,6 +122,12 @@ namespace Ogre {
         static void convertToFloat( float *rgbaPtr, const void *srcPtr,
                                     size_t numComponents, uint32 flags );
 
+        // Templated version with count as template parameter for better optimization
+        template <typename T, size_t NumComponents>
+        static void convertToFloat( float *rgbaPtr, const void *srcPtr, uint32 flags );
+        template <typename T, size_t NumComponents>
+        static void convertFromFloat( const float *rgbaPtr, void *dstPtr, uint32 flags );
+
     public:
         static size_t getBytesPerPixel( PixelFormatGpu format );
         static size_t getNumberOfComponents( PixelFormatGpu format );
