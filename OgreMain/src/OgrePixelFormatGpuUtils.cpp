@@ -583,6 +583,77 @@ namespace Ogre
             rgbaPtr[3] = 1.0f;
     }
     //-----------------------------------------------------------------------------------
+    // Templated version with NumComponents as template parameter for better optimization and loop unrolling
+    template <typename T, size_t NumComponents>
+    void PixelFormatGpuUtils::convertToFloat( float *rgbaPtr, const void *srcPtr, uint32 flags )
+    {
+        for( size_t i=0; i<NumComponents; ++i )
+        {
+            if( flags & PFF_FLOAT )
+                rgbaPtr[i] = ((const float*)srcPtr)[i];
+            else if( flags & PFF_HALF )
+                rgbaPtr[i] = Bitwise::halfToFloat( ((const uint16*)srcPtr)[i] );
+            else if( flags & PFF_NORMALIZED )
+            {
+                const float val = static_cast<float>( ((const T*)srcPtr)[i] );
+                float rawValue = val / (float)std::numeric_limits<T>::max();
+                if( !(flags & PFF_SIGNED) )
+                {
+                    if( flags & PFF_SRGB && i != 3u )
+                        rawValue = fromSRGB( rawValue );
+                    rgbaPtr[i] = rawValue;
+                }
+                else
+                {
+                    // -128 & -127 and -32768 & -32767 both map to -1 according to D3D10 rules.
+                    rgbaPtr[i] = std::max( rawValue, -1.0f );
+                }
+            }
+            else
+                rgbaPtr[i] = static_cast<float>( ((const T*)srcPtr)[i] );
+        }
+
+        // Set remaining components to 0, and alpha to 1
+        // This is only executed for NumComponents < 4
+        for( size_t i=NumComponents; i<3u; ++i )
+            rgbaPtr[i] = 0.0f;
+        if( NumComponents < 4u )
+            rgbaPtr[3] = 1.0f;
+    }
+    //-----------------------------------------------------------------------------------
+    // Templated version with NumComponents as template parameter for better optimization and loop unrolling
+    template <typename T, size_t NumComponents>
+    void PixelFormatGpuUtils::convertFromFloat( const float *rgbaPtr, void *dstPtr, uint32 flags )
+    {
+        for( size_t i=0; i<NumComponents; ++i )
+        {
+            if( flags & PFF_FLOAT )
+                ((float*)dstPtr)[i] = rgbaPtr[i];
+            else if( flags & PFF_HALF )
+                ((uint16*)dstPtr)[i] = Bitwise::floatToHalf( rgbaPtr[i] );
+            else if( flags & PFF_NORMALIZED )
+            {
+                float val = rgbaPtr[i];
+                if( !(flags & PFF_SIGNED) )
+                {
+                    val = Math::saturate( val );
+                    if( flags & PFF_SRGB && i != 3u )
+                        val = toSRGB( val );
+                    val *= (float)std::numeric_limits<T>::max();
+                    ((T*)dstPtr)[i] = static_cast<T>( roundf( val ) );
+                }
+                else
+                {
+                    val = Math::Clamp( val, -1.0f, 1.0f );
+                    val *= (float)std::numeric_limits<T>::max();
+                    ((T*)dstPtr)[i] = static_cast<T>( roundf( val ) );
+                }
+            }
+            else
+                ((T*)dstPtr)[i] = static_cast<T>( roundf( rgbaPtr[i] ) );
+        }
+    }
+    //-----------------------------------------------------------------------------------
     void PixelFormatGpuUtils::packColour( const float *rgbaPtr, PixelFormatGpu pf, void *dstPtr )
     {
         const uint32 flags = getFlags( pf );
@@ -1290,6 +1361,8 @@ namespace Ogre
     namespace
     {
         typedef void ( *row_conversion_func_t )( uint8 *src, uint8 *dst, size_t width );
+        typedef void ( *unpack_func_t )( float *rgba, const void *src );
+        typedef void ( *pack_func_t )( const float *rgba, void *dst );
 
         void convCopy16Bpx( uint8 *src, uint8 *dst, size_t width ) { memcpy( dst, src, 16 * width ); }
         void convCopy12Bpx( uint8 *src, uint8 *dst, size_t width ) { memcpy( dst, src, 12 * width ); }
@@ -1439,6 +1512,248 @@ namespace Ogre
         }
         // clang-format on
     }  // namespace
+    //-----------------------------------------------------------------------------------
+    namespace
+    {
+        // Helper template that handles z, y, and x loop nesting with conversion, transform, and packing
+        template<typename ConversionFunc, typename TransformFunc, typename PackingFunc>
+        void bulkPixelConversionLoop( uint8 *srcData, uint8 *dstData,
+                                    const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                    const size_t width, const size_t height, const size_t depthOrSlices,
+                                    const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                    ConversionFunc convFunc, TransformFunc transformFunc, PackingFunc packFunc )
+        {
+            float rgba[4];
+            for( size_t z=0; z<depthOrSlices; ++z )
+            {
+                for( size_t y=0; y<height; ++y )
+                {
+                    size_t dest_y = verticalFlip ? height - 1 - y : y;
+                    uint8 *srcPtr = srcData + src.bytesPerImage * z + src.bytesPerRow * y;
+                    uint8 *dstPtr = dstData + dst.bytesPerImage * z + dst.bytesPerRow * dest_y;
+                    
+                    for( size_t x=0; x<width; ++x )
+                    {
+                        convFunc( srcPtr, rgba );
+                        transformFunc( rgba );
+                        packFunc( rgba, dstPtr );
+                        srcPtr += srcBytesPerPixel;
+                        dstPtr += dstBytesPerPixel;
+                    }
+                }
+            }
+        }
+
+        // Template wrapper that dispatches on dstFormat and provides packing functor
+        template<typename ConversionFunc, typename TransformFunc>
+        void bulkPixelConversionWithDstFormat( uint8 *srcData, uint8 *dstData,
+                                              const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                              const size_t width, const size_t height, const size_t depthOrSlices,
+                                              const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                              PixelFormatGpu dstFormat, ConversionFunc convFunc, TransformFunc transformFunc )
+        {
+            const uint32 dstFlags = getFlags( dstFormat );
+            
+            switch( dstFormat )
+            {
+            case PFG_RGBA8_UNORM: case PFG_RGBA8_UNORM_SRGB: case PFG_RGBA8_UINT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<uint8, 4>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<int8, 4>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<uint16, 2>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_RG16_SNORM: case PFG_RG16_SINT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<int16, 2>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_R32_FLOAT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<float, 1>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_R32_UINT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<uint32, 1>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            case PFG_R32_SINT:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFlags]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            convertFromFloat<int32, 1>( rgba, dstPtr, dstFlags );
+                                        } );
+                break;
+            default:
+                bulkPixelConversionLoop( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                        width, height, depthOrSlices, src, dst, verticalFlip,
+                                        convFunc, transformFunc,
+                                        [dstFormat]( float *rgba, uint8 *dstPtr )
+                                        {
+                                            packColour( rgba, dstFormat, dstPtr );
+                                        } );
+                break;
+            }
+        }
+
+        // Unified optimized pixel conversion with pluggable transformation
+        template<typename TransformFunc>
+        void bulkPixelConversionOptimized( uint8 *srcData, PixelFormatGpu srcFormat,
+                                          uint8 *dstData, PixelFormatGpu dstFormat,
+                                          const size_t srcBytesPerPixel, const size_t dstBytesPerPixel,
+                                          const size_t width, const size_t height, const size_t depthOrSlices,
+                                          const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                          TransformFunc transformFunc )
+        {
+            const uint32 srcFlags = getFlags( srcFormat );
+            
+            // Dispatch on source format
+            switch( srcFormat )
+            {
+            case PFG_RGBA8_UNORM: case PFG_RGBA8_UNORM_SRGB: case PFG_RGBA8_UINT: 
+            case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
+            {
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      convertToFloat<uint8, 4>( rgba, srcPtr, srcFlags );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+            case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
+            case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
+            {
+                const bool isBGR = (srcFormat == PFG_BGR8_UNORM || srcFormat == PFG_BGR8_UNORM_SRGB);
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFlags, isBGR]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      convertToFloat<uint8, 3>( rgba, srcPtr, srcFlags );
+                                                      if( isBGR )
+                                                          std::swap( rgba[0], rgba[2] );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+            case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
+            case PFG_RG16_SNORM: case PFG_RG16_SINT:
+            {
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      convertToFloat<uint16, 2>( rgba, srcPtr, srcFlags );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+            case PFG_R32_FLOAT:
+            {
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      convertToFloat<float, 1>( rgba, srcPtr, srcFlags );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+            case PFG_R32_UINT:
+            {
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      convertToFloat<uint32, 1>( rgba, srcPtr, srcFlags );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+            case PFG_R32_SINT:
+            {
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFlags]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      convertToFloat<int32, 1>( rgba, srcPtr, srcFlags );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+            default:
+                bulkPixelConversionWithDstFormat( srcData, dstData, srcBytesPerPixel, dstBytesPerPixel,
+                                                  width, height, depthOrSlices, src, dst, verticalFlip,
+                                                  dstFormat,
+                                                  [srcFormat]( uint8 *srcPtr, float *rgba )
+                                                  {
+                                                      unpackColour( rgba, srcFormat, srcPtr );
+                                                  },
+                                                  transformFunc );
+                break;
+            }
+        }
+    }
     //-----------------------------------------------------------------------------------
     void PixelFormatGpuUtils::bulkPixelConversion( const TextureBox &src, PixelFormatGpu srcFormat,
                                                    TextureBox &dst, PixelFormatGpu dstFormat,
@@ -1620,25 +1935,32 @@ namespace Ogre
             }
         }
 
-        float rgba[4];
-        for( size_t z=0; z<depthOrSlices; ++z )
-        {
-            for( size_t y=0; y<height; ++y )
-            {
-                size_t dest_y = verticalFlip ? height - 1 - y : y;
-                uint8 *srcPtr = srcData + src.bytesPerImage * z + src.bytesPerRow * y;
-                uint8 *dstPtr = dstData + dst.bytesPerImage * z + dst.bytesPerRow * dest_y;
+        // Cache the format information outside the loop to avoid repeated lookups
+        const uint32 srcFlags = getFlags( srcFormat );
+        const uint32 dstFlags = getFlags( dstFormat );
 
-                for( size_t x=0; x<width; ++x )
-                {
-                    unpackColour( rgba, srcFormat, srcPtr );
-                    for( int i = 0; i < 4; ++i )
-                        rgba[i] = rgba[i] * rangeM + rangeA;
-                    packColour( rgba, dstFormat, dstPtr );
-                    srcPtr += srcBytesPerPixel;
-                    dstPtr += dstBytesPerPixel;
-                }
-            }
+        // Dispatch to the appropriate optimized version based on whether range transformation is needed
+        if( rangeM == 1.0f && rangeA == 0.0f )
+        {
+            // No range transformation needed
+            bulkPixelConversionOptimized( srcData, srcFormat, dstData, dstFormat,
+                                          srcBytesPerPixel, dstBytesPerPixel,
+                                          width, height, depthOrSlices,
+                                          src, dst, verticalFlip,
+                                          []( float *rgba ) {} );
+        }
+        else
+        {
+            // Range transformation needed
+            bulkPixelConversionOptimized( srcData, srcFormat, dstData, dstFormat,
+                                          srcBytesPerPixel, dstBytesPerPixel,
+                                          width, height, depthOrSlices,
+                                          src, dst, verticalFlip,
+                                          [rangeM, rangeA]( float *rgba )
+                                          {
+                                              for( int i = 0; i < 4; ++i )
+                                                  rgba[i] = rgba[i] * rangeM + rangeA;
+                                          } );
         }
     }
     //-----------------------------------------------------------------------------------
