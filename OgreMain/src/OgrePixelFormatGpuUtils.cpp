@@ -1552,7 +1552,7 @@ namespace Ogre
                                               const TextureBox &src, const TextureBox &dst, bool verticalFlip,
                                               PixelFormatGpu dstFormat, ConversionFunc convFunc, TransformFunc transformFunc )
         {
-            const uint32 dstFlags = getFlags( dstFormat );
+            const uint32 dstFlags = PixelFormatGpuUtils::getFlags( dstFormat );
             
             switch( dstFormat )
             {
@@ -1562,7 +1562,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<uint8, 4>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<uint8, 4>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_RGBA8_SNORM: case PFG_RGBA8_SINT:
@@ -1571,7 +1571,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<int8, 4>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<int8, 4>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_RGB8_UNORM: case PFG_RGB8_UNORM_SRGB:
@@ -1580,7 +1580,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_BGR8_UNORM: case PFG_BGR8_UNORM_SRGB:
@@ -1589,7 +1589,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<uint8, 3>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_RG16_FLOAT: case PFG_RG16_UNORM: case PFG_RG16_UINT:
@@ -1598,7 +1598,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<uint16, 2>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<uint16, 2>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_RG16_SNORM: case PFG_RG16_SINT:
@@ -1607,7 +1607,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<int16, 2>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<int16, 2>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_R32_FLOAT:
@@ -1616,7 +1616,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<float, 1>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<float, 1>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_R32_UINT:
@@ -1625,7 +1625,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<uint32, 1>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<uint32, 1>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             case PFG_R32_SINT:
@@ -1634,7 +1634,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFlags]( float *rgba, uint8 *dstPtr )
                                         {
-                                            convertFromFloat<int32, 1>( rgba, dstPtr, dstFlags );
+                                            PixelFormatGpuUtils::convertFromFloat<int32, 1>( rgba, dstPtr, dstFlags );
                                         } );
                 break;
             default:
@@ -1643,7 +1643,7 @@ namespace Ogre
                                         convFunc, transformFunc,
                                         [dstFormat]( float *rgba, uint8 *dstPtr )
                                         {
-                                            packColour( rgba, dstFormat, dstPtr );
+                                            PixelFormatGpuUtils::packColour( rgba, dstFormat, dstPtr );
                                         } );
                 break;
             }
@@ -1658,7 +1658,7 @@ namespace Ogre
                                           const TextureBox &src, const TextureBox &dst, bool verticalFlip,
                                           TransformFunc transformFunc )
         {
-            const uint32 srcFlags = getFlags( srcFormat );
+            const uint32 srcFlags = PixelFormatGpuUtils::getFlags( srcFormat );
             
             // Dispatch on source format
             switch( srcFormat )
@@ -1671,7 +1671,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFlags]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      convertToFloat<uint8, 4>( rgba, srcPtr, srcFlags );
+                                                      PixelFormatGpuUtils::convertToFloat<uint8, 4>( rgba, srcPtr, srcFlags );
                                                   },
                                                   transformFunc );
                 break;
@@ -1685,7 +1685,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFlags, isBGR]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      convertToFloat<uint8, 3>( rgba, srcPtr, srcFlags );
+                                                      PixelFormatGpuUtils::convertToFloat<uint8, 3>( rgba, srcPtr, srcFlags );
                                                       if( isBGR )
                                                           std::swap( rgba[0], rgba[2] );
                                                   },
@@ -1700,7 +1700,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFlags]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      convertToFloat<uint16, 2>( rgba, srcPtr, srcFlags );
+                                                      PixelFormatGpuUtils::convertToFloat<uint16, 2>( rgba, srcPtr, srcFlags );
                                                   },
                                                   transformFunc );
                 break;
@@ -1712,7 +1712,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFlags]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      convertToFloat<float, 1>( rgba, srcPtr, srcFlags );
+                                                      PixelFormatGpuUtils::convertToFloat<float, 1>( rgba, srcPtr, srcFlags );
                                                   },
                                                   transformFunc );
                 break;
@@ -1724,7 +1724,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFlags]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      convertToFloat<uint32, 1>( rgba, srcPtr, srcFlags );
+                                                      PixelFormatGpuUtils::convertToFloat<uint32, 1>( rgba, srcPtr, srcFlags );
                                                   },
                                                   transformFunc );
                 break;
@@ -1736,7 +1736,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFlags]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      convertToFloat<int32, 1>( rgba, srcPtr, srcFlags );
+                                                      PixelFormatGpuUtils::convertToFloat<int32, 1>( rgba, srcPtr, srcFlags );
                                                   },
                                                   transformFunc );
                 break;
@@ -1747,7 +1747,7 @@ namespace Ogre
                                                   dstFormat,
                                                   [srcFormat]( uint8 *srcPtr, float *rgba )
                                                   {
-                                                      unpackColour( rgba, srcFormat, srcPtr );
+                                                      PixelFormatGpuUtils::unpackColour( rgba, srcFormat, srcPtr );
                                                   },
                                                   transformFunc );
                 break;
