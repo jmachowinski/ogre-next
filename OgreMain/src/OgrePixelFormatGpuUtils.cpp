@@ -1752,6 +1752,25 @@ namespace Ogre
         }
     }
     //-----------------------------------------------------------------------------------
+    // helper template to centralize the z/y loops for row conversions
+    template<typename RowConvFunc>
+    static void bulkPixelRowConversion( uint8 *srcData, uint8 *dstData,
+                                        const size_t width, const size_t height, const size_t depthOrSlices,
+                                        const TextureBox &src, const TextureBox &dst, bool verticalFlip,
+                                        RowConvFunc rowConv )
+    {
+        for( size_t z=0; z<depthOrSlices; ++z )
+        {
+            for( size_t y=0; y<height; ++y )
+            {
+                size_t dest_y = verticalFlip ? height - 1 - y : y;
+                uint8* srcPtr = srcData + src.bytesPerImage * z + src.bytesPerRow * y;
+                uint8* dstPtr = dstData + dst.bytesPerImage * z + dst.bytesPerRow * dest_y;
+                rowConv( srcPtr, dstPtr, width );
+            }
+        }
+    }
+
     void PixelFormatGpuUtils::bulkPixelConversion( const TextureBox &src, PixelFormatGpu srcFormat,
                                                    TextureBox &dst, PixelFormatGpu dstFormat,
                                                    bool verticalFlip )
@@ -1783,8 +1802,7 @@ namespace Ogre
         const size_t height = src.height;
         const size_t depthOrSlices = src.getDepthOrSlices();
 
-        // Is there a optimized row conversion?
-        row_conversion_func_t rowConversionFunc = 0;
+        // Is there a optimized row conversion? use the loop template and return early if a match is found
         assert(PFL_COUNT <= 16); // adjust PFL_PAIR definition if assertion failed
 #define PFL_PAIR( a, b ) ( ( a << 4 ) | b )
         if( srcFormat == dstFormat )
@@ -1792,14 +1810,14 @@ namespace Ogre
             switch( srcBytesPerPixel )
             {
                 // clang-format off
-            case 1: rowConversionFunc = convCopy1Bpx; break;
-            case 2: rowConversionFunc = convCopy2Bpx; break;
-            case 3: rowConversionFunc = convCopy3Bpx; break;
-            case 4: rowConversionFunc = convCopy4Bpx; break;
-            case 6: rowConversionFunc = convCopy6Bpx; break;
-            case 8: rowConversionFunc = convCopy8Bpx; break;
-            case 12: rowConversionFunc = convCopy12Bpx; break;
-            case 16: rowConversionFunc = convCopy16Bpx; break;
+            case 1:  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy1Bpx); return;
+            case 2:  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy2Bpx); return;
+            case 3:  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy3Bpx); return;
+            case 4:  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy4Bpx); return;
+            case 6:  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy6Bpx); return;
+            case 8:  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy8Bpx); return;
+            case 12: bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy12Bpx); return;
+            case 16: bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy16Bpx); return;
                 // clang-format on
             }
         }
@@ -1810,55 +1828,54 @@ namespace Ogre
             switch( PFL_PAIR( srcLayout, dstLayout ) )
             {
                 // clang-format off
-            case PFL_PAIR( PFL_RGBA32, PFL_RGB32 ): rowConversionFunc = convRGBA32toRGB32; break;
-            case PFL_PAIR( PFL_RGB32, PFL_RG32 ): rowConversionFunc = convRGB32toRG32; break;
-            case PFL_PAIR( PFL_RG32, PFL_RGB32 ): rowConversionFunc = convRG32toRGB32; break;
-            case PFL_PAIR( PFL_RG32, PFL_R32 ): rowConversionFunc = convRG32toR32; break;
+            case PFL_PAIR( PFL_RGBA32, PFL_RGB32 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBA32toRGB32); return;
+            case PFL_PAIR( PFL_RGB32, PFL_RG32 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGB32toRG32); return;
+            case PFL_PAIR( PFL_RG32, PFL_RGB32 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRG32toRGB32); return;
+            case PFL_PAIR( PFL_RG32, PFL_R32 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRG32toR32); return;
 
-            case PFL_PAIR( PFL_RGBA16, PFL_RGB16 ): rowConversionFunc = convRGBA16toRGB16; break;
-            case PFL_PAIR( PFL_RGB16, PFL_RGBA16 ): rowConversionFunc = convRGB16toRGBA16; break;
-            case PFL_PAIR( PFL_RGB16, PFL_RG16 ): rowConversionFunc = convRGB16toRG16; break;
-            case PFL_PAIR( PFL_RG16, PFL_RGB16 ): rowConversionFunc = convRG16toRGB16; break;
-            case PFL_PAIR( PFL_RG16, PFL_R16 ): rowConversionFunc = convRG16toR16; break;
+            case PFL_PAIR( PFL_RGBA16, PFL_RGB16 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBA16toRGB16); return;
+            case PFL_PAIR( PFL_RGB16, PFL_RGBA16 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGB16toRGBA16); return;
+            case PFL_PAIR( PFL_RGB16, PFL_RG16 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGB16toRG16); return;
+            case PFL_PAIR( PFL_RG16, PFL_RGB16 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRG16toRGB16); return;
+            case PFL_PAIR( PFL_RG16, PFL_R16 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRG16toR16); return;
 
-            case PFL_PAIR( PFL_RGBA8, PFL_BGRA8 ): rowConversionFunc = convRGBAtoBGRA; break;
-            case PFL_PAIR( PFL_RGBA8, PFL_BGRX8 ): rowConversionFunc = convRGBAtoBGRA; break;
-            case PFL_PAIR( PFL_RGBA8, PFL_RGB8 ): rowConversionFunc = convRGBAtoRGB; break;
-            case PFL_PAIR( PFL_RGBA8, PFL_BGR8 ): rowConversionFunc = convRGBAtoBGR; break;
-            case PFL_PAIR( PFL_RGBA8, PFL_RG8 ): rowConversionFunc = convRGBAtoRG; break;
-            case PFL_PAIR( PFL_RGBA8, PFL_R8 ): rowConversionFunc = convRGBAtoR; break;
+            case PFL_PAIR( PFL_RGBA8, PFL_BGRA8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoBGRA); return;
+            case PFL_PAIR( PFL_RGBA8, PFL_BGRX8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoBGRA); return;
+            case PFL_PAIR( PFL_RGBA8, PFL_RGB8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoRGB); return;
+            case PFL_PAIR( PFL_RGBA8, PFL_BGR8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoBGR); return;
+            case PFL_PAIR( PFL_RGBA8, PFL_RG8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoRG); return;
+            case PFL_PAIR( PFL_RGBA8, PFL_R8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoR); return;
 
-            case PFL_PAIR( PFL_BGRA8, PFL_RGBA8 ): rowConversionFunc = convRGBAtoBGRA; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_BGRX8 ): rowConversionFunc = convCopy4Bpx; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_RGB8 ): rowConversionFunc = convRGBAtoBGR; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_BGR8 ): rowConversionFunc = convRGBAtoRGB; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_RG8 ): rowConversionFunc = convBGRAtoRG; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_R8 ): rowConversionFunc = convBGRAtoR; break;
+            case PFL_PAIR( PFL_BGRA8, PFL_RGBA8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoBGRA); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_BGRX8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convCopy4Bpx); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_RGB8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoBGR); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_BGR8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoRGB); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_RG8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRAtoRG); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_R8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRAtoR); return;
 
-            case PFL_PAIR( PFL_BGRX8, PFL_RGBA8 ): rowConversionFunc = convBGRXtoRGBA; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_BGRA8 ): rowConversionFunc = convBGRXtoBGRA; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_RGB8 ): rowConversionFunc = convRGBAtoBGR; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_BGR8 ): rowConversionFunc = convRGBAtoRGB; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_RG8 ): rowConversionFunc = convBGRAtoRG; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_R8 ): rowConversionFunc = convBGRAtoR; break;
+            case PFL_PAIR( PFL_BGRX8, PFL_RGBA8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRXtoRGBA); return;
+            case PFL_PAIR( PFL_BGRX8, PFL_BGRA8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRXtoBGRA); return;
+            case PFL_PAIR( PFL_BGRX8, PFL_BGR8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoRGB); return;
+            case PFL_PAIR( PFL_BGRX8, PFL_RG8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRAtoRG); return;
+            case PFL_PAIR( PFL_BGRX8, PFL_R8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRAtoR); return;
 
-            case PFL_PAIR( PFL_RGB8, PFL_RGBA8 ): rowConversionFunc = convRGBtoRGBA; break;
-            case PFL_PAIR( PFL_RGB8, PFL_BGRA8 ): rowConversionFunc = convRGBtoBGRA; break;
-            case PFL_PAIR( PFL_RGB8, PFL_BGRX8 ): rowConversionFunc = convRGBtoBGRA; break;
-            case PFL_PAIR( PFL_RGB8, PFL_BGR8 ): rowConversionFunc = convRGBtoBGR; break;
-            case PFL_PAIR( PFL_RGB8, PFL_RG8 ): rowConversionFunc = convRGBtoRG; break;
-            case PFL_PAIR( PFL_RGB8, PFL_R8 ): rowConversionFunc = convRGBtoR; break;
+            case PFL_PAIR( PFL_RGB8, PFL_RGBA8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoRGBA); return;
+            case PFL_PAIR( PFL_RGB8, PFL_BGRA8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoBGRA); return;
+            case PFL_PAIR( PFL_RGB8, PFL_BGRX8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoBGRA); return;
+            case PFL_PAIR( PFL_RGB8, PFL_BGR8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoBGR); return;
+            case PFL_PAIR( PFL_RGB8, PFL_RG8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoRG); return;
+            case PFL_PAIR( PFL_RGB8, PFL_R8 ):     bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoR); return;
 
-            case PFL_PAIR( PFL_BGR8, PFL_RGBA8 ): rowConversionFunc = convRGBtoBGRA; break;
-            case PFL_PAIR( PFL_BGR8, PFL_BGRA8 ): rowConversionFunc = convRGBtoRGBA; break;
-            case PFL_PAIR( PFL_BGR8, PFL_BGRX8 ): rowConversionFunc = convRGBtoRGBA; break;
-            case PFL_PAIR( PFL_BGR8, PFL_RGB8 ): rowConversionFunc = convRGBAtoBGR; break;
-            case PFL_PAIR( PFL_BGR8, PFL_RG8 ): rowConversionFunc = convBGRtoRG; break;
-            case PFL_PAIR( PFL_BGR8, PFL_R8 ): rowConversionFunc = convBGRtoR; break;
+            case PFL_PAIR( PFL_BGR8, PFL_RGBA8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGBtoBGRA); return;
+            case PFL_PAIR( PFL_BGR8, PFL_BGRA8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGBtoRGBA); return;
+            case PFL_PAIR( PFL_BGR8, PFL_BGRX8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGBtoRGBA); return;
+            case PFL_PAIR( PFL_BGR8, PFL_RGB8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGBAtoBGR); return;
+            case PFL_PAIR( PFL_BGR8, PFL_RG8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convBGRtoRG); return;
+            case PFL_PAIR( PFL_BGR8, PFL_R8 ):     bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convBGRtoR); return;
 
-            case PFL_PAIR( PFL_RG8, PFL_RGB8 ): rowConversionFunc = convRGtoRGB; break;
-            case PFL_PAIR( PFL_RG8, PFL_BGR8 ): rowConversionFunc = convRGtoBGR; break;
-            case PFL_PAIR( PFL_RG8, PFL_R8 ): rowConversionFunc = convRGtoR; break;
+            case PFL_PAIR( PFL_RG8, PFL_RGB8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGtoRGB); return;
+            case PFL_PAIR( PFL_RG8, PFL_BGR8 ):    bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGtoBGR); return;
+            case PFL_PAIR( PFL_RG8, PFL_R8 ):      bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGtoR); return;
                 // clang-format on
             }
         }
@@ -1869,12 +1886,12 @@ namespace Ogre
             switch( PFL_PAIR( srcLayout, dstLayout ) )
             {
                 // clang-format off
-            case PFL_PAIR( PFL_RGBA8, PFL_RG8 ): rowConversionFunc = convRGBAtoRG_u2s; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_RG8 ): rowConversionFunc = convBGRAtoRG_u2s; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_RG8 ): rowConversionFunc = convBGRAtoRG_u2s; break;
-            case PFL_PAIR( PFL_RGB8, PFL_RG8 ): rowConversionFunc = convRGBtoRG_u2s; break;
-            case PFL_PAIR( PFL_BGR8, PFL_RG8 ): rowConversionFunc = convBGRtoRG_u2s; break;
-            case PFL_PAIR( PFL_RG8, PFL_RG8 ): rowConversionFunc = convRGtoRG_u2s; break;
+            case PFL_PAIR( PFL_RGBA8, PFL_RG8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGBAtoRG_u2s); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_RG8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convBGRAtoRG_u2s); return;
+            case PFL_PAIR( PFL_BGRX8, PFL_RG8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convBGRAtoRG_u2s); return;
+            case PFL_PAIR( PFL_RGB8, PFL_RG8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGBtoRG_u2s); return;
+            case PFL_PAIR( PFL_BGR8, PFL_RG8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convBGRtoRG_u2s); return;
+            case PFL_PAIR( PFL_RG8, PFL_RG8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src,	dst, verticalFlip, convRGtoRG_u2s); return;
                 // clang-format on
             }
         }
@@ -1885,31 +1902,16 @@ namespace Ogre
             switch( PFL_PAIR( srcLayout, dstLayout ) )
             {
                 // clang-format off
-            case PFL_PAIR( PFL_RGBA8, PFL_RG8 ): rowConversionFunc = convRGBAtoRG_s2u; break;
-            case PFL_PAIR( PFL_BGRA8, PFL_RG8 ): rowConversionFunc = convBGRAtoRG_s2u; break;
-            case PFL_PAIR( PFL_BGRX8, PFL_RG8 ): rowConversionFunc = convBGRAtoRG_s2u; break;
-            case PFL_PAIR( PFL_RGB8, PFL_RG8 ): rowConversionFunc = convRGBtoRG_s2u; break;
-            case PFL_PAIR( PFL_BGR8, PFL_RG8 ): rowConversionFunc = convBGRtoRG_s2u; break;
-            case PFL_PAIR( PFL_RG8, PFL_RG8 ): rowConversionFunc = convRGtoRG_s2u; break;
+            case PFL_PAIR( PFL_RGBA8, PFL_RG8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBAtoRG_s2u); return;
+            case PFL_PAIR( PFL_BGRA8, PFL_RG8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRAtoRG_s2u); return;
+            case PFL_PAIR( PFL_BGRX8, PFL_RG8 ): bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRAtoRG_s2u); return;
+            case PFL_PAIR( PFL_RGB8, PFL_RG8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGBtoRG_s2u); return;
+            case PFL_PAIR( PFL_BGR8, PFL_RG8 ):  bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convBGRtoRG_s2u); return;
+            case PFL_PAIR( PFL_RG8, PFL_RG8 ):   bulkPixelRowConversion(srcData, dstData, width, height, depthOrSlices, src, dst, verticalFlip, convRGtoRG_s2u); return;
                 // clang-format on
             }
         }
 #undef PFL_PAIR
-
-        if (rowConversionFunc)
-        {
-            for( size_t z=0; z<depthOrSlices; ++z )
-            {
-                for( size_t y=0; y<height; ++y )
-                {
-                    size_t dest_y = verticalFlip ? height - 1 - y : y;
-                    uint8* srcPtr = srcData + src.bytesPerImage * z + src.bytesPerRow * y;
-                    uint8* dstPtr = dstData + dst.bytesPerImage * z + dst.bytesPerRow * dest_y;
-                    rowConversionFunc( srcPtr, dstPtr, width );
-                }
-            }
-            return;
-        }
 
         // The brute force fallback
         float rangeM = 1.0f;
