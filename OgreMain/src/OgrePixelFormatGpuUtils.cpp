@@ -37,6 +37,8 @@ THE SOFTWARE.
 #include "OgreException.h"
 
 #include "OgreProfiler.h"
+#include <chrono>
+#include <iostream>
 
 namespace Ogre
 {
@@ -1775,6 +1777,11 @@ namespace Ogre
                                                    TextureBox &dst, PixelFormatGpu dstFormat,
                                                    bool verticalFlip )
     {
+        auto start = std::chrono::high_resolution_clock::now();
+
+        std::cerr << "PixelFormatGpuUtils::bulkPixelConversion : Converted " << srcFormat << " to " << dstFormat << "\n";
+
+
         if( srcFormat == dstFormat && !verticalFlip )
         {
             dst.copyFrom( src );
@@ -1961,6 +1968,10 @@ namespace Ogre
                                                   rgba[i] = rgba[i] * rangeM + rangeA;
                                           } );
         }
+
+        auto end = std::chrono::high_resolution_clock::now();
+
+        std::cerr << " Took " << (end-start).count() << "\n";
     }
     //-----------------------------------------------------------------------------------
     uint32 PixelFormatGpuUtils::getFlags( PixelFormatGpu format )

@@ -39,6 +39,8 @@ THE SOFTWARE.
 #include "OgreStagingTexture.h"
 #include "OgreResourceGroupManager.h"
 #include "OgreProfiler.h"
+#include <iostream>
+#include <chrono>
 
 namespace Ogre {
     ImageCodec2::~ImageCodec2() {
@@ -458,6 +460,9 @@ namespace Ogre {
             texture->getTextureType(), texture->getPixelFormat() );
         asyncTicket->download( resolvedTexture, 0, true, &srcBox );
 
+        auto start = std::chrono::high_resolution_clock::now();
+
+
         if( asyncTicket->canMapMoreThanOneSlice() )
         {
             srcBox = asyncTicket->map( 0 );
@@ -478,6 +483,9 @@ namespace Ogre {
             }
         }
 
+        auto end = std::chrono::high_resolution_clock::now();
+
+        std::cerr << "Converted " << texture->getPixelFormat() << " to " << dstFormat << "took" << (end-start).count() << " \n";
         textureManager->destroyAsyncTextureTicket( asyncTicket );
         asyncTicket = 0;
 
