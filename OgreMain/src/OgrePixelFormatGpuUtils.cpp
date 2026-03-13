@@ -39,6 +39,7 @@ THE SOFTWARE.
 #include "OgreProfiler.h"
 #include <chrono>
 #include <iostream>
+#include <array>
 
 namespace Ogre
 {
@@ -622,6 +623,67 @@ namespace Ogre
         if( NumComponents < 4u )
             rgbaPtr[3] = 1.0f;
     }
+
+    // Explicit specialization for uint8_t optimized with a static LUT.
+    template<>
+    void PixelFormatGpuUtils::convertToFloat<uint8, 4>( float *rgbaPtr, const void *srcPtr, uint32 flags )
+    {
+        if( flags & PFF_FLOAT )
+            for( size_t i=0; i< 4; ++i )
+            {
+                rgbaPtr[i] = ((const float*)srcPtr)[i];
+            }
+        else if( flags & PFF_HALF )
+            for( size_t i=0; i< 4; ++i )
+            {
+                rgbaPtr[i] = Bitwise::halfToFloat( ((const uint16*)srcPtr)[i] );
+            }
+        else if( flags & PFF_NORMALIZED )
+        {
+            static std::array<float, 256> lut = [] () {
+                std::array<float, 256> ret;
+                for(uint8_t i = 0; i < std::numeric_limits<uint8_t>::max(); i++)
+                {
+                    const float val = static_cast<float>( i );
+                    float rawValue = val / (float)std::numeric_limits<uint8_t>::max();
+                    rawValue = fromSRGB( rawValue );
+                    ret[i] = rawValue;
+                }
+                return ret;
+            }();
+
+            auto toNormalizedFloat = [] (uint8_t input)
+            {
+                const float val = static_cast<float>( input );
+                float rawValue = val / (float)std::numeric_limits<uint8_t>::max();
+                return rawValue;
+            };
+
+            if( !(flags & PFF_SIGNED) )
+            {
+                rgbaPtr[0] = lut[((const uint8_t*)srcPtr)[0]];
+                rgbaPtr[1] = lut[((const uint8_t*)srcPtr)[1]];
+                rgbaPtr[2] = lut[((const uint8_t*)srcPtr)[2]];
+                rgbaPtr[3] = toNormalizedFloat(((const uint8_t*)srcPtr)[3]);
+            }
+            else
+            {
+                for( size_t i=0; i< 4; ++i )
+                {
+                    // -128 & -127 and -32768 & -32767 both map to -1 according to D3D10 rules.
+                    rgbaPtr[i] = std::max( toNormalizedFloat(((const uint8_t*)srcPtr)[i]), -1.0f );
+                }
+            }
+        }
+        else
+        {
+            for( size_t i=0; i< 4; ++i )
+            {
+                rgbaPtr[i] = static_cast<float>( ((const uint8_t*)srcPtr)[i] );
+            }
+        }
+    }
+
     //-----------------------------------------------------------------------------------
     // Templated version with NumComponents as template parameter for better optimization and loop unrolling
     template <typename T, size_t NumComponents>
