@@ -57,6 +57,7 @@ namespace Ogre {
         mNodeMemoryManager( nodeMemoryManager ),
         mGlobalIndex( -1 ),
         mParentIndex( -1 )
+        ,mTransformInSync(false)
     {
         if( mParent )
             mDepthLevel = mParent->mDepthLevel + 1;
@@ -80,6 +81,7 @@ namespace Ogre {
         mNodeMemoryManager( 0 ),
         mGlobalIndex( -1 ),
         mParentIndex( -1 )
+        ,mTransformInSync(false)
     {
         mTransform = transformPtrs;
     }
@@ -138,6 +140,7 @@ namespace Ogre {
         mNodeMemoryManager->migrateTo( mTransform, mDepthLevel, nodeMemoryManager );
         mNodeMemoryManager = nodeMemoryManager;
         _callMemoryChangeListeners();
+        mTransformInSync = false;
     }
     //-----------------------------------------------------------------------
     bool Node::isStatic() const
@@ -206,6 +209,7 @@ namespace Ogre {
                 }
 
                 _callMemoryChangeListeners();
+                mTransformInSync = false;
             }
         }
     }
@@ -253,6 +257,7 @@ namespace Ogre {
                 }
 
                 _callMemoryChangeListeners();
+                mTransformInSync = false;
             }
         }
     }
@@ -273,6 +278,7 @@ namespace Ogre {
         mDepthLevel = mParent->mDepthLevel + 1;
 
         _callMemoryChangeListeners();
+        mTransformInSync = false;
 
         //Keep propagating changes to our children
         NodeVec::const_iterator itor = mChildren.begin();
@@ -299,14 +305,23 @@ namespace Ogre {
     //-----------------------------------------------------------------------
     void Node::_updateChildren()
     {
-        updateFromParentImpl();
+        bool needUpdate = !mTransformInSync;
+        if( mParent && !mParent->mTransformInSync )
+        {
+            mParent->_updateFromParent();
+            needUpdate = true;
+        }
+
+        if( needUpdate )
+        {
+            updateFromParentImpl();
+            mTransformInSync = true;
+        }
 
         // Call listener (note, this method only called if there's something to do)
         if (mListener)
-        {
             mListener->nodeUpdated(this);
-        }
-        
+
         //Keep propagating changes to our children
         NodeVec::iterator itor = mChildren.begin();
         NodeVec::iterator end  = mChildren.end();
@@ -320,15 +335,21 @@ namespace Ogre {
     //-----------------------------------------------------------------------
     void Node::_updateFromParent(void)
     {
-        if( mParent )
-            mParent->_updateFromParent();
-
-        updateFromParentImpl();
-
-        // Call listener (note, this method only called if there's something to do)
-        if (mListener)
+        bool needUpdate = !mTransformInSync;
+        if( mParent && !mParent->mTransformInSync )
         {
-            mListener->nodeUpdated(this);
+            mParent->_updateFromParent();
+            needUpdate = true;
+        }
+
+        if( needUpdate )
+        {
+            updateFromParentImpl();
+            mTransformInSync = true;
+
+            // Call listener (note, this method only called if there's something to do)
+            if (mListener)
+                mListener->nodeUpdated(this);
         }
     }
     //-----------------------------------------------------------------------
@@ -427,6 +448,7 @@ namespace Ogre {
                 mTransform.mOwner[j]->mCachedTransformOutOfDate = false;
         }
 #endif
+    mTransformInSync = true;
     }
     //-----------------------------------------------------------------------
     void Node::updateAllTransforms( const size_t numNodes, Transform t )
@@ -607,8 +629,14 @@ namespace Ogre {
     {
         assert(!q.isNaN() && "Invalid orientation supplied as parameter");
         q.normalise();
-        mTransform.mOrientation->setFromQuaternion( q, mTransform.mIndex );
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        Quaternion old;
+        mTransform.mOrientation->getAsQuaternion( old, mTransform.mIndex );
+        if( old != q )
+        {
+            mTransform.mOrientation->setFromQuaternion( q, mTransform.mIndex );
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     void Node::setOrientation( Real w, Real x, Real y, Real z )
@@ -618,15 +646,28 @@ namespace Ogre {
     //-----------------------------------------------------------------------
     void Node::resetOrientation(void)
     {
-        mTransform.mOrientation->setFromQuaternion( Quaternion::IDENTITY, mTransform.mIndex );
+        Quaternion old;
+        mTransform.mOrientation->getAsQuaternion( old, mTransform.mIndex );
+        if( old != Quaternion::IDENTITY )
+        {
+            mTransform.mOrientation->setFromQuaternion( Quaternion::IDENTITY, mTransform.mIndex );
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
 
     //-----------------------------------------------------------------------
     void Node::setPosition(const Vector3& pos)
     {
         assert(!pos.isNaN() && "Invalid vector supplied as parameter");
-        mTransform.mPosition->setFromVector3( pos, mTransform.mIndex );
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        Vector3 old;
+        mTransform.mPosition->getAsVector3( old, mTransform.mIndex );
+        if( old != pos )
+        {
+            mTransform.mPosition->setFromVector3( pos, mTransform.mIndex );
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     void Node::setPosition(Real x, Real y, Real z)
@@ -687,8 +728,14 @@ namespace Ogre {
             break;
         }
 
-        mTransform.mPosition->setFromVector3( position, mTransform.mIndex );
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        Vector3 oldPos;
+        mTransform.mPosition->getAsVector3( oldPos, mTransform.mIndex );
+        if( oldPos != position )
+        {
+            mTransform.mPosition->setFromVector3( position, mTransform.mIndex );
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     void Node::translate(Real x, Real y, Real z, TransformSpace relativeTo)
@@ -758,8 +805,7 @@ namespace Ogre {
         // Normalise quaternion to avoid drift
         orientation.normalise();
 
-        mTransform.mOrientation->setFromQuaternion( orientation, mTransform.mIndex );
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        setOrientation( orientation );
     }
 
     
@@ -775,6 +821,7 @@ namespace Ogre {
 #if OGRE_DEBUG_MODE >= OGRE_DEBUG_MEDIUM
             mCachedTransformOutOfDate = false;
 #endif
+            mTransformInSync = true;
         }
     }
     //-----------------------------------------------------------------------
@@ -790,6 +837,7 @@ namespace Ogre {
 #endif
             mTransform.mDerivedTransform[mTransform.mIndex].makeTransform(
                         _getDerivedPosition(), _getDerivedScale(), q );
+            mTransformInSync = true;
         }
     }
     //-----------------------------------------------------------------------
@@ -897,8 +945,14 @@ namespace Ogre {
     void Node::setScale(const Vector3& inScale)
     {
         assert(!inScale.isNaN() && "Invalid vector supplied as parameter");
-        mTransform.mScale->setFromVector3( inScale, mTransform.mIndex );
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        Vector3 old;
+        mTransform.mScale->getAsVector3( old, mTransform.mIndex );
+        if( old != inScale )
+        {
+            mTransform.mScale->setFromVector3( inScale, mTransform.mIndex );
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     void Node::setScale(Real x, Real y, Real z)
@@ -913,8 +967,12 @@ namespace Ogre {
     //-----------------------------------------------------------------------
     void Node::setInheritOrientation(bool inherit)
     {
-        mTransform.mInheritOrientation[mTransform.mIndex] = inherit;
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        if( mTransform.mInheritOrientation[mTransform.mIndex] != inherit )
+        {
+            mTransform.mInheritOrientation[mTransform.mIndex] = inherit;
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     bool Node::getInheritOrientation(void) const
@@ -924,8 +982,12 @@ namespace Ogre {
     //-----------------------------------------------------------------------
     void Node::setInheritScale(bool inherit)
     {
-        mTransform.mInheritScale[mTransform.mIndex] = inherit;
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        if( mTransform.mInheritScale[mTransform.mIndex] != inherit )
+        {
+            mTransform.mInheritScale[mTransform.mIndex] = inherit;
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     bool Node::getInheritScale(void) const
@@ -935,9 +997,14 @@ namespace Ogre {
     //-----------------------------------------------------------------------
     void Node::scale(const Vector3& inScale)
     {
-        mTransform.mScale->setFromVector3( mTransform.mScale->getAsVector3( mTransform.mIndex ) *
-                                            inScale, mTransform.mIndex );
-        CACHED_TRANSFORM_OUT_OF_DATE();
+        Vector3 old = mTransform.mScale->getAsVector3( mTransform.mIndex );
+        Vector3 newScale = old * inScale;
+        if( old != newScale )
+        {
+            mTransform.mScale->setFromVector3( newScale, mTransform.mIndex );
+            mTransformInSync = false;
+            CACHED_TRANSFORM_OUT_OF_DATE();
+        }
     }
     //-----------------------------------------------------------------------
     void Node::scale(Real x, Real y, Real z)
@@ -967,6 +1034,7 @@ namespace Ogre {
     void Node::_setCachedTransformOutOfDate(void)
     {
         mCachedTransformOutOfDate = true;
+        mTransformInSync = false;
 
     #if OGRE_DEBUG_MODE >= OGRE_DEBUG_HIGH
         NodeVec::const_iterator itor = mChildren.begin();

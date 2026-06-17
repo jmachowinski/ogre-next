@@ -172,6 +172,9 @@ namespace Ogre {
 
         /// User objects binding.
         UserObjectBindings mUserObjectBindings;
+        
+        /// Whether this node's derived transform is in sync with its parents
+        bool mTransformInSync;
 
     public:
         /** Index in the vector holding this node reference (could be our parent node, or a global array
