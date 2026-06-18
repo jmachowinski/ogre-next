@@ -36,6 +36,9 @@ THE SOFTWARE.
 #include "Math/Array/OgreNodeMemoryManager.h"
 #include "Math/Array/OgreBooleanMask.h"
 
+#include <execinfo.h>
+#include <stdio.h>
+
 #if OGRE_DEBUG_MODE >= OGRE_DEBUG_MEDIUM
     #define CACHED_TRANSFORM_OUT_OF_DATE() this->_setCachedTransformOutOfDate()
 #else
@@ -342,7 +345,7 @@ namespace Ogre {
             needUpdate = true;
         }
 
-        if( needUpdate )
+        // if( needUpdate )
         {
             updateFromParentImpl();
             mTransformInSync = true;
@@ -352,9 +355,24 @@ namespace Ogre {
                 mListener->nodeUpdated(this);
         }
     }
+    void print_stacktrace() {
+        void* array[20];
+        size_t size = backtrace(array, 20);
+        char** strings = backtrace_symbols(array, size);
+
+        printf("Stack trace:\n");
+        for (size_t i = 0; i < size; i++) {
+            printf("%s\n", strings[i]);
+        }
+        free(strings);
+    }
+
     //-----------------------------------------------------------------------
     void Node::updateFromParentImpl(void)
     {
+
+        print_stacktrace();
+
 #if OGRE_NODE_INHERIT_TRANSFORM
         // determine our transform, without parent part
         ArrayMatrix4 trSoA;
